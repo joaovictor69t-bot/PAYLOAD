@@ -2,40 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { HashRouter, Routes, Route, useNavigate, Navigate, useLocation } from 'react-router-dom';
 import { User, UserRole, WorkRecord, RecordMode, IndividualType, MonthlyGroup } from './types';
 import * as StorageService from './services/storage';
-import { Button, Card, Input, Modal } from './components/UI';
+import { Button, Card, Input, Modal, ErrorBoundary } from './components/UI';
 import { 
   IconPlus, IconHistory, IconCamera, 
   IconTrash, IconDownload, IconChevronDown, IconLogOut, IconSearch, IconHome 
 } from './components/Icons';
-
-// --- Error Boundary ---
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: any, errorInfo: any) {
-    console.error("App Error:", error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6 text-center">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">Ops! Algo deu errado.</h2>
-          <p className="text-gray-600 mb-6">Ocorreu um erro inesperado. Por favor, recarregue a página.</p>
-          <Button onClick={() => window.location.reload()}>Recarregar App</Button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 // --- Login View ---
 const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
@@ -756,7 +727,11 @@ export default function App() {
     // Initial check for admin presence in DB
     const init = async () => {
        try {
-         await StorageService.initializeStorage();
+         // Race condition: If Supabase takes longer than 5s, we stop loading anyway to show Login
+         const timeout = new Promise(resolve => setTimeout(resolve, 5000));
+         const dbInit = StorageService.initializeStorage();
+         
+         await Promise.race([dbInit, timeout]);
        } catch (error) {
          console.error("Initialization error:", error);
        } finally {
@@ -778,7 +753,6 @@ export default function App() {
 
   return (
     <HashRouter>
-      <ErrorBoundary>
         <div className="max-w-md mx-auto min-h-screen bg-gray-50 shadow-2xl relative">
           
           {/* Header (Only if logged in) */}
@@ -830,7 +804,6 @@ export default function App() {
             </nav>
           )}
         </div>
-      </ErrorBoundary>
     </HashRouter>
   );
 }
