@@ -41,6 +41,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [activeTab, setActiveTab] = useState<'DRIVER' | 'ADMIN'>('DRIVER');
   const [isRegistering, setIsRegistering] = useState(false);
+  const [loading, setLoading] = useState(false);
   
   // Form States
   const [name, setName] = useState('');
@@ -48,19 +49,20 @@ const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
     try {
       if (activeTab === 'DRIVER' && isRegistering) {
         if (!name || !username || !password) throw new Error('Preencha todos os campos');
-        const newUser = StorageService.registerUser(name, username, password);
+        const newUser = await StorageService.registerUser(name, username, password);
         onLogin(newUser);
       } else {
         // Login Logic
         const role = activeTab === 'DRIVER' ? UserRole.DRIVER : UserRole.ADMIN;
-        const user = StorageService.authenticate(username, password, role);
+        const user = await StorageService.authenticate(username, password, role);
         if (user) {
           onLogin(user);
         } else {
@@ -69,6 +71,8 @@ const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
       }
     } catch (err: any) {
       setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -98,14 +102,16 @@ const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
 
           <form onSubmit={handleSubmit} className="p-6">
             
-            <div className="space-y-4 mb-4">
+            <div className="mb-4">
               {isRegistering && activeTab === 'DRIVER' && (
-                <Input 
-                  label="Nome Completo" 
-                  placeholder="Seu nome"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
+                <div className="mb-4">
+                  <Input 
+                    label="Nome Completo" 
+                    placeholder="Seu nome"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </div>
               )}
               
               <div className="space-y-4">
@@ -114,6 +120,7 @@ const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
                   placeholder="Nome de usuário" 
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  className="bg-white"
                 />
                 
                 <Input 
@@ -122,14 +129,15 @@ const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
                   placeholder="Sua senha" 
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  className="bg-white"
                 />
               </div>
             </div>
 
             {error && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg mb-4">{error}</div>}
 
-            <Button fullWidth type="submit" size="lg">
-              {isRegistering ? 'Criar Conta' : 'Entrar'}
+            <Button fullWidth type="submit" size="lg" disabled={loading}>
+              {loading ? 'Carregando...' : (isRegistering ? 'Criar Conta' : 'Entrar')}
             </Button>
 
             {activeTab === 'DRIVER' && (
@@ -154,9 +162,16 @@ const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
 const DashboardView = ({ user }: { user: User }) => {
   const navigate = useNavigate();
   const [records, setRecords] = useState<WorkRecord[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setRecords(StorageService.getUserRecords(user.id));
+    const fetchRecords = async () => {
+      setLoading(true);
+      const data = await StorageService.getUserRecords(user.id);
+      setRecords(data);
+      setLoading(false);
+    };
+    fetchRecords();
   }, [user.id]);
 
   const stats = useMemo(() => {
@@ -172,6 +187,8 @@ const DashboardView = ({ user }: { user: User }) => {
 
     return { totalEarnings, dailyAvg };
   }, [records]);
+
+  if (loading) return <div className="text-center p-10 text-gray-500">Carregando dados...</div>;
 
   return (
     <div className="space-y-6 pb-20 animate-fade-in">
@@ -281,57 +298,59 @@ const CalculatorView = ({ user }: { user: User }) => {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!date) return alert('Selecione uma data');
     setLoading(true);
 
-    setTimeout(() => {
-      try {
-        if (mode === RecordMode.INDIVIDUAL) {
-          const pQty = parseInt(parcels);
-          const cQty = parseInt(collections);
-          
-          if (!pQty && !cQty) throw new Error('Preencha ao menos parcelas ou coletas.');
+    try {
+      if (mode === RecordMode.INDIVIDUAL) {
+        const pQty = parseInt(parcels);
+        const cQty = parseInt(collections);
+        
+        if (!pQty && !cQty) throw new Error('Preencha ao menos parcelas ou coletas.');
 
-          if (pQty > 0) {
-            StorageService.createRecord({
-              userId: user.id, date, mode, type: IndividualType.PARCEL,
-              quantity: pQty, value: pQty * 1.00, photos,
-              routeNames: routeId1, // Save route ID if provided
-              isTwoIDs: false
-            });
-          }
-          if (cQty > 0) {
-            StorageService.createRecord({
-              userId: user.id, date, mode, type: IndividualType.COLLECTION,
-              quantity: cQty, value: cQty * 0.80, photos, 
-              routeNames: routeId1, // Save route ID if provided
-              isTwoIDs: false
-            });
-          }
-        } else {
-          // Daily
-          const qty = parseInt(dailyQty) || 0;
-          if (isTwoIDs && (!routeId1 || !routeId2)) throw new Error('Digite os IDs das duas rotas.');
-          
-          const finalRouteNames = isTwoIDs ? `${routeId1} + ${routeId2}` : routeId1;
-
-          StorageService.createRecord({
-            userId: user.id, date, mode, type: IndividualType.DAILY_FLAT,
-            quantity: isTwoIDs ? qty : 1, // 1 representing "1 ID unit" if single, else actual qty
-            value: previewValue,
-            isTwoIDs,
-            routeNames: finalRouteNames,
-            photos
-          });
+        // Use Promise.all to save concurrently
+        const promises = [];
+        if (pQty > 0) {
+          promises.push(StorageService.createRecord({
+            userId: user.id, date, mode, type: IndividualType.PARCEL,
+            quantity: pQty, value: pQty * 1.00, photos,
+            routeNames: routeId1, 
+            isTwoIDs: false
+          }));
         }
-        navigate('/');
-      } catch (err: any) {
-        alert(err.message);
-      } finally {
-        setLoading(false);
+        if (cQty > 0) {
+          promises.push(StorageService.createRecord({
+            userId: user.id, date, mode, type: IndividualType.COLLECTION,
+            quantity: cQty, value: cQty * 0.80, photos, 
+            routeNames: routeId1, 
+            isTwoIDs: false
+          }));
+        }
+        await Promise.all(promises);
+
+      } else {
+        // Daily
+        const qty = parseInt(dailyQty) || 0;
+        if (isTwoIDs && (!routeId1 || !routeId2)) throw new Error('Digite os IDs das duas rotas.');
+        
+        const finalRouteNames = isTwoIDs ? `${routeId1} + ${routeId2}` : routeId1;
+
+        await StorageService.createRecord({
+          userId: user.id, date, mode, type: IndividualType.DAILY_FLAT,
+          quantity: isTwoIDs ? qty : 1, 
+          value: previewValue,
+          isTwoIDs,
+          routeNames: finalRouteNames,
+          photos
+        });
       }
-    }, 500); 
+      navigate('/');
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -483,14 +502,20 @@ const HistoryView = ({ user }: { user: User }) => {
   const [records, setRecords] = useState<WorkRecord[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [modalImage, setModalImage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const refresh = () => setRecords(StorageService.getUserRecords(user.id));
+  const refresh = async () => {
+    setLoading(true);
+    const data = await StorageService.getUserRecords(user.id);
+    setRecords(data);
+    setLoading(false);
+  };
   
   useEffect(() => { refresh(); }, [user.id]);
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('Tem certeza que deseja apagar este registro?')) {
-      StorageService.deleteRecord(id);
+      await StorageService.deleteRecord(id);
       refresh();
     }
   };
@@ -514,6 +539,8 @@ const HistoryView = ({ user }: { user: User }) => {
 
     return Object.values(groups).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
   }, [records]);
+
+  if (loading && records.length === 0) return <div className="text-center p-10 text-gray-400">Carregando histórico...</div>;
 
   return (
     <div className="pb-24 animate-fade-in">
@@ -610,9 +637,17 @@ const AdminView = () => {
   const [drivers, setDrivers] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDriver, setSelectedDriver] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [exportLoading, setExportLoading] = useState(false);
 
   useEffect(() => {
-    setDrivers(StorageService.getAllDrivers());
+    const load = async () => {
+      setLoading(true);
+      const data = await StorageService.getAllDrivers();
+      setDrivers(data);
+      setLoading(false);
+    };
+    load();
   }, []);
 
   const filteredDrivers = drivers.filter(d => 
@@ -620,12 +655,16 @@ const AdminView = () => {
     d.username.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleGlobalExport = () => {
+  const handleGlobalExport = async () => {
+    setExportLoading(true);
     let allRecords: WorkRecord[] = [];
-    drivers.forEach(d => {
-      allRecords = [...allRecords, ...StorageService.getUserRecords(d.id)];
-    });
+    // Sequential fetching to avoid rate limits on free tier, or Promise.all
+    for (const d of drivers) {
+      const recs = await StorageService.getUserRecords(d.id);
+      allRecords = [...allRecords, ...recs];
+    }
     StorageService.generateCSV(allRecords, `Payload_GLOBAL_EXPORT_${new Date().toISOString().split('T')[0]}`);
+    setExportLoading(false);
   };
 
   if (selectedDriver) {
@@ -647,6 +686,8 @@ const AdminView = () => {
     );
   }
 
+  if (loading) return <div className="text-center p-10 text-gray-500">Carregando motoristas...</div>;
+
   return (
     <div className="pb-20 animate-fade-in">
        <h1 className="text-2xl font-bold text-gray-800 mb-6">Painel Admin</h1>
@@ -661,8 +702,8 @@ const AdminView = () => {
               onChange={e => setSearchTerm(e.target.value)}
             />
          </div>
-         <Button variant="secondary" onClick={handleGlobalExport} className="whitespace-nowrap">
-           <IconDownload className="w-5 h-5"/>
+         <Button variant="secondary" onClick={handleGlobalExport} className="whitespace-nowrap" disabled={exportLoading}>
+           {exportLoading ? '...' : <IconDownload className="w-5 h-5"/>}
          </Button>
        </div>
 
@@ -692,8 +733,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check session or persist logic if needed. For now simple.
-    setLoading(false);
+    // Initial check for admin presence in DB
+    const init = async () => {
+       await StorageService.initializeStorage();
+       setLoading(false);
+    };
+    init();
   }, []);
 
   const handleLogin = (user: User) => {
@@ -704,7 +749,7 @@ export default function App() {
     setCurrentUser(null);
   };
 
-  if (loading) return null;
+  if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center">Iniciando sistema...</div>;
 
   return (
     <HashRouter>

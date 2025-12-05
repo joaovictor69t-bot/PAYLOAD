@@ -1,23 +1,10 @@
 import { User, UserRole, WorkRecord, RecordMode, IndividualType } from '../types';
-
-const KEYS = {
-  USERS: 'pt_users_v2',
-  RECORDS: 'pt_records_v2',
-  SESSION: 'pt_session_v2',
-};
+import { supabase } from './supabase';
 
 // --- Utilities ---
 
 export const generateUUID = (): string => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  // Fallback for older environments
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  return crypto.randomUUID();
 };
 
 export const formatDate = (dateStr: string): string => {
@@ -31,104 +18,143 @@ export const formatCurrency = (val: number): string => {
 
 // --- Auth & User Management ---
 
-const getStoredUsers = (): User[] => {
-  try {
-    const raw = localStorage.getItem(KEYS.USERS);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-};
-
-const saveStoredUsers = (users: User[]) => {
-  localStorage.setItem(KEYS.USERS, JSON.stringify(users));
-};
-
-export const initializeStorage = () => {
-  const users = getStoredUsers();
+export const initializeStorage = async () => {
   // Check if admin exists
-  const adminExists = users.some(u => u.username === 'admin');
-  if (!adminExists) {
-    const admin: User = {
-      id: generateUUID(),
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('username', 'admin')
+    .single();
+
+  if (!users && !error) { // Only create if not found
+    const admin = {
       name: 'System Admin',
       username: 'admin',
-      passwordHash: 'EVRI01', // Hardcoded as per requirements
+      password_hash: 'EVRI01',
       role: UserRole.ADMIN,
-      createdAt: Date.now(),
+      created_at: Date.now(),
     };
-    users.push(admin);
-    saveStoredUsers(users);
+    await supabase.from('users').insert([admin]);
   }
 };
 
-export const authenticate = (username: string, password: string, role: UserRole): User | null => {
-  const users = getStoredUsers();
-  const user = users.find(u => u.username === username && u.passwordHash === password && u.role === role);
-  return user || null;
+export const authenticate = async (username: string, password: string, role: UserRole): Promise<User | null> => {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('username', username)
+    .eq('password_hash', password)
+    .eq('role', role)
+    .single();
+
+  if (error || !data) return null;
+
+  // Map Supabase column names to Typescript interface
+  return {
+    id: data.id,
+    name: data.name,
+    username: data.username,
+    passwordHash: data.password_hash,
+    role: data.role as UserRole,
+    createdAt: data.created_at
+  };
 };
 
-export const registerUser = (name: string, username: string, password: string): User => {
-  const users = getStoredUsers();
-  if (users.some(u => u.username === username)) {
+export const registerUser = async (name: string, username: string, password: string): Promise<User> => {
+  // Check if user exists
+  const { data: existing } = await supabase.from('users').select('id').eq('username', username).single();
+  
+  if (existing) {
     throw new Error('Usuário já existe.');
   }
   
-  const newUser: User = {
-    id: generateUUID(),
+  const newUser = {
     name,
     username,
-    passwordHash: password,
+    password_hash: password,
     role: UserRole.DRIVER,
-    createdAt: Date.now(),
+    created_at: Date.now(),
   };
   
-  users.push(newUser);
-  saveStoredUsers(users);
-  return newUser;
+  const { data, error } = await supabase.from('users').insert([newUser]).select().single();
+  
+  if (error) throw new Error(error.message);
+
+  return {
+    id: data.id,
+    name: data.name,
+    username: data.username,
+    passwordHash: data.password_hash,
+    role: data.role as UserRole,
+    createdAt: data.created_at
+  };
 };
 
-export const getAllDrivers = (): User[] => {
-  return getStoredUsers().filter(u => u.role === UserRole.DRIVER);
+export const getAllDrivers = async (): Promise<User[]> => {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('role', UserRole.DRIVER);
+
+  if (error) return [];
+
+  return data.map((d: any) => ({
+    id: d.id,
+    name: d.name,
+    username: d.username,
+    passwordHash: d.password_hash,
+    role: d.role as UserRole,
+    createdAt: d.created_at
+  }));
 };
 
 // --- Records Management ---
 
-const getStoredRecords = (): WorkRecord[] => {
-  try {
-    const raw = localStorage.getItem(KEYS.RECORDS);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-};
-
-const saveStoredRecords = (records: WorkRecord[]) => {
-  localStorage.setItem(KEYS.RECORDS, JSON.stringify(records));
-};
-
-export const createRecord = (record: Omit<WorkRecord, 'id' | 'timestamp'>) => {
-  const records = getStoredRecords();
-  const newRecord: WorkRecord = {
-    ...record,
-    id: generateUUID(),
+export const createRecord = async (record: Omit<WorkRecord, 'id' | 'timestamp'>) => {
+  const newRecord = {
+    user_id: record.userId,
+    date: record.date,
+    mode: record.mode,
+    type: record.type,
+    quantity: record.quantity,
+    value: record.value,
+    route_names: record.routeNames,
+    is_two_ids: record.isTwoIDs,
+    photos: record.photos, // Supabase text[] handles array of strings
     timestamp: Date.now(),
   };
-  records.push(newRecord);
-  saveStoredRecords(records);
+
+  const { error } = await supabase.from('work_records').insert([newRecord]);
+  if (error) throw new Error('Erro ao salvar registro: ' + error.message);
 };
 
-export const getUserRecords = (userId: string): WorkRecord[] => {
-  const records = getStoredRecords();
-  return records
-    .filter(r => r.userId === userId)
-    .sort((a, b) => b.date.localeCompare(a.date)); // Newest first
+export const getUserRecords = async (userId: string): Promise<WorkRecord[]> => {
+  const { data, error } = await supabase
+    .from('work_records')
+    .select('*')
+    .eq('user_id', userId)
+    .order('date', { ascending: false });
+
+  if (error) return [];
+
+  return data.map((r: any) => ({
+    id: r.id,
+    userId: r.user_id,
+    date: r.date,
+    mode: r.mode as RecordMode,
+    type: r.type as IndividualType,
+    quantity: r.quantity,
+    value: r.value,
+    routeNames: r.route_names,
+    isTwoIDs: r.is_two_ids,
+    photos: r.photos || [],
+    timestamp: r.timestamp
+  }));
 };
 
-export const deleteRecord = (recordId: string) => {
-  let records = getStoredRecords();
-  records = records.filter(r => r.id !== recordId);
-  saveStoredRecords(records);
+export const deleteRecord = async (recordId: string) => {
+  const { error } = await supabase.from('work_records').delete().eq('id', recordId);
+  if (error) throw new Error('Erro ao deletar registro');
 };
 
 // --- Calculation Logic ---
