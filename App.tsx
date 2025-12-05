@@ -70,7 +70,8 @@ const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
         }
       }
     } catch (err: any) {
-      setError(err.message);
+      console.error(err);
+      setError(err.message || 'Erro ao conectar com o servidor.');
     } finally {
       setLoading(false);
     }
@@ -167,9 +168,14 @@ const DashboardView = ({ user }: { user: User }) => {
   useEffect(() => {
     const fetchRecords = async () => {
       setLoading(true);
-      const data = await StorageService.getUserRecords(user.id);
-      setRecords(data);
-      setLoading(false);
+      try {
+        const data = await StorageService.getUserRecords(user.id);
+        setRecords(data);
+      } catch (error) {
+        console.error("Failed to fetch records", error);
+      } finally {
+        setLoading(false);
+      }
     };
     fetchRecords();
   }, [user.id]);
@@ -309,7 +315,6 @@ const CalculatorView = ({ user }: { user: User }) => {
         
         if (!pQty && !cQty) throw new Error('Preencha ao menos parcelas ou coletas.');
 
-        // Use Promise.all to save concurrently
         const promises = [];
         if (pQty > 0) {
           promises.push(StorageService.createRecord({
@@ -335,13 +340,15 @@ const CalculatorView = ({ user }: { user: User }) => {
         if (isTwoIDs && (!routeId1 || !routeId2)) throw new Error('Digite os IDs das duas rotas.');
         
         const finalRouteNames = isTwoIDs ? `${routeId1} + ${routeId2}` : routeId1;
+        // Allows saving routeId1 even if single ID
+        const singleRouteName = !isTwoIDs && routeId1 ? routeId1 : undefined;
 
         await StorageService.createRecord({
           userId: user.id, date, mode, type: IndividualType.DAILY_FLAT,
           quantity: isTwoIDs ? qty : 1, 
           value: previewValue,
           isTwoIDs,
-          routeNames: finalRouteNames,
+          routeNames: finalRouteNames || singleRouteName,
           photos
         });
       }
@@ -506,9 +513,14 @@ const HistoryView = ({ user }: { user: User }) => {
 
   const refresh = async () => {
     setLoading(true);
-    const data = await StorageService.getUserRecords(user.id);
-    setRecords(data);
-    setLoading(false);
+    try {
+      const data = await StorageService.getUserRecords(user.id);
+      setRecords(data);
+    } catch(err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
   
   useEffect(() => { refresh(); }, [user.id]);
@@ -526,7 +538,6 @@ const HistoryView = ({ user }: { user: User }) => {
     records.forEach(r => {
       const monthKey = r.date.substring(0, 7); // YYYY-MM
       const dateObj = new Date(r.date);
-      // Capitalize first letter of month
       const monthName = dateObj.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
       const label = monthName.charAt(0).toUpperCase() + monthName.slice(1);
 
@@ -643,9 +654,14 @@ const AdminView = () => {
   useEffect(() => {
     const load = async () => {
       setLoading(true);
-      const data = await StorageService.getAllDrivers();
-      setDrivers(data);
-      setLoading(false);
+      try {
+        const data = await StorageService.getAllDrivers();
+        setDrivers(data);
+      } catch(err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
     };
     load();
   }, []);
@@ -658,13 +674,17 @@ const AdminView = () => {
   const handleGlobalExport = async () => {
     setExportLoading(true);
     let allRecords: WorkRecord[] = [];
-    // Sequential fetching to avoid rate limits on free tier, or Promise.all
-    for (const d of drivers) {
-      const recs = await StorageService.getUserRecords(d.id);
-      allRecords = [...allRecords, ...recs];
+    try {
+      for (const d of drivers) {
+        const recs = await StorageService.getUserRecords(d.id);
+        allRecords = [...allRecords, ...recs];
+      }
+      StorageService.generateCSV(allRecords, `Payload_GLOBAL_EXPORT_${new Date().toISOString().split('T')[0]}`);
+    } catch(err) {
+      alert("Erro ao exportar");
+    } finally {
+      setExportLoading(false);
     }
-    StorageService.generateCSV(allRecords, `Payload_GLOBAL_EXPORT_${new Date().toISOString().split('T')[0]}`);
-    setExportLoading(false);
   };
 
   if (selectedDriver) {
@@ -735,8 +755,13 @@ export default function App() {
   useEffect(() => {
     // Initial check for admin presence in DB
     const init = async () => {
-       await StorageService.initializeStorage();
-       setLoading(false);
+       try {
+         await StorageService.initializeStorage();
+       } catch (error) {
+         console.error("Initialization error:", error);
+       } finally {
+         setLoading(false);
+       }
     };
     init();
   }, []);
@@ -749,7 +774,7 @@ export default function App() {
     setCurrentUser(null);
   };
 
-  if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center">Iniciando sistema...</div>;
+  if (loading) return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-500">Iniciando sistema...</div>;
 
   return (
     <HashRouter>

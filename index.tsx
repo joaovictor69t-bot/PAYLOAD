@@ -1,10 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { initializeStorage } from './services/storage';
-
-// Initialize admin seed if needed
-initializeStorage();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

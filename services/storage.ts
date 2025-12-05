@@ -19,22 +19,33 @@ export const formatCurrency = (val: number): string => {
 // --- Auth & User Management ---
 
 export const initializeStorage = async () => {
-  // Check if admin exists
-  const { data: users, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('username', 'admin')
-    .single();
+  try {
+    // Check if admin exists. If table doesn't exist, this might throw or return error.
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('username', 'admin')
+      .single();
 
-  if (!users && !error) { // Only create if not found
-    const admin = {
-      name: 'System Admin',
-      username: 'admin',
-      password_hash: 'EVRI01',
-      role: UserRole.ADMIN,
-      created_at: Date.now(),
-    };
-    await supabase.from('users').insert([admin]);
+    // If "PGRST116" code, it means no rows returned (which is fine, we create admin).
+    // If other error (like table missing), we log and return to avoid crashing the whole app.
+    if (error && error.code !== 'PGRST116') {
+      console.warn("Skipping admin seed due to database error (Table might be missing):", error.message);
+      return;
+    }
+
+    if (!users) { 
+      const admin = {
+        name: 'System Admin',
+        username: 'admin',
+        password_hash: 'EVRI01',
+        role: UserRole.ADMIN,
+        created_at: Date.now(),
+      };
+      await supabase.from('users').insert([admin]);
+    }
+  } catch (err) {
+    console.warn("Initialize storage failed safely:", err);
   }
 };
 
