@@ -1,0 +1,7 @@
+{
+  "name": "PayLoad",
+  "description": "A mobile-first delivery driver earnings tracker with admin capabilities.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
